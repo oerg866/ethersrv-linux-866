@@ -25,6 +25,8 @@ struct fileprops {
 #define FFILE_ISROOT 1
 #define FFILE_ISFAT  2
 
+#define DIR_MAX 512
+
 /* returns the "start sector" of a filesystem item (file or directory).
  * returns 0xffff on error */
 unsigned short getitemss(char *f);
@@ -85,5 +87,8 @@ int isfat(char *d);
 
 /* returns the size of an open file (or -1 on error) */
 long getfopsize(unsigned short fss);
+
+/* Converts a path full of lowercase 8.3 names to the host name, provided it exists */
+int shorttolong(char *dst, char *src, const char *root);
 
 #endif

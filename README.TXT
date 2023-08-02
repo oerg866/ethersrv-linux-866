@@ -2,6 +2,7 @@
             ethersrv-linux Copyright (C) 2017, 2018 Mateusz Viste
                        http://etherdfs.sourceforge.net
 
+Long file name and other modifications by Eric Voirin (oerg866@googlemail.com)
 
 ethersrv-linux is an implementation of EtherSRV for Linux. It allows a Linux
 computer to share its drive over Ethernet with multiple DOS clients running
@@ -56,6 +57,13 @@ Notes:
      # mkfs.msdos fat.img
      # mount -o loop fat.img /mnt/fat
 
+
+IMPORTANT:
+
+While longer file names and files with different capitalization can be
+accessed in this fork, it will only pick the first file it finds that matches
+to acces, meaning that in case of naming conflicts you may end up accessing
+the wrong file or directory.
 
 ===[ License ]================================================================
 

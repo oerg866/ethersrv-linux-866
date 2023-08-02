@@ -1,4 +1,9 @@
-History file of ethersrv-linux
+History file of ethersrv-linux-866
+
+20230802:
+ - fixed spaces being included in truncated FCB names
+ - made longer file names accessible through truncated names
+ - file and directory accesses are no longer broken by case sensitivity
 
 20180203:
  - fixed file truncation when writing to offset 0 (patch by Peter De Wachter),

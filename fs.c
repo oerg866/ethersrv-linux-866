@@ -3,6 +3,7 @@
  * Copyright (C) 2017 Mateusz Viste
  */
 
+#include <assert.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -18,9 +19,11 @@
 #include <unistd.h>
 #include <linux/msdos_fs.h>
 #include <sys/ioctl.h>
+#include <string.h>
 
 #include "debug.h"
 #include "fs.h" /* include self for control */
+
 
 /* database containing file/dir identifiers and their names - this is used
  * whenever ethersrv-linux needs to provide etherdfs with a 16bit identifier
@@ -81,6 +84,7 @@ unsigned short getitemss(char *f) {
   }
   /* register it */
   fsdb[firstfree].name = strdup(f);
+
   if (fsdb[firstfree].name == NULL) {
     fprintf(stderr, "ERROR: OUT OF MEM!\n");
     return(0xffffu);
@@ -99,21 +103,39 @@ char upchar(char c) {
   return(c);
 }
 
+/* turns a string into all-upper-case characters, up to n chars max */
+static void upstring(char *s, int n) {
+  while ((n-- != 0) && (*s != 0)) {
+    *s = upchar(*s);
+    s++;
+  }
+}
+
 /* translates a filename string into a fcb-style block ("FILE0001TXT") */
 void filename2fcb(char *d, char *s) {
   int i;
+  int j;
   /* fill the FCB block with spaces */
   for (i = 0; i < 11; i++) d[i] = ' ';
+
   /* cover '.' and '..' entries */
   for (i = 0; i < 8; i++) {
     if (s[i] != '.') break;
     d[i] = '.';
   }
+  
   /* fill in the filename, up to 8 chars or first dot, whichever comes first */
+  j = i;
+
   for (; i < 8; i++) {
-    if ((s[i] == '.') || (s[i] == 0)) break;
-    d[i] = upchar(s[i]);
+    if ((s[j] == '.') || (s[j] == 0)) break;
+    while ((s[j]) == ' ') {
+      j++;
+    }
+    d[i] = upchar(s[j]);
+    j++;
   }
+
   s += i;
   /* fast forward to either the first dot or NULL-terminator */
   for (; ((*s != '.') && (*s != 0)); s++);
@@ -121,9 +143,9 @@ void filename2fcb(char *d, char *s) {
   s++; /* skip the dot */
   /* fill in the extension */
   d += 8;
-  for (i = 0; i < 3; i++) {
-    if ((s[i] == '.') || (s[i] == 0)) break;
-    *d = upchar(s[i]);
+  for (j = 0; j < 3; j++) {
+    if ((s[j] == '.') || (s[j] == 0) || (s[j] == ' ')) break;
+    *d = upchar(s[j]);
     d++;
   }
 }
@@ -283,6 +305,7 @@ int findfile(struct fileprops *f, unsigned short dss, char *fcbtmpl, unsigned ch
     if (n <= *nth) continue;
     /* skip '.' and '..' items if directory is root */
     if ((dirlist->fprops.fcbname[0] == '.') && (flags & FFILE_ISROOT)) continue;
+
     /* if no match, continue */
     if (matchfile2mask(fcbtmpl, dirlist->fprops.fcbname) != 0) continue;
     /* do attributes match? (return only items with AT MOST the specified combination of hidden, system, and directory attributes if no VOL bit set, otherwise look for VOL only.
@@ -479,4 +502,107 @@ long getfopsize(unsigned short fss) {
   if (fname == NULL) return(-1);
   if (getitemattr(fname, &fprops, 0) == 0xff) return(-1);
   return(fprops.fsize);
+}
+
+
+/**/
+int shorttolong(char *dst, char *src, const char *root) {
+  int found = 0;
+
+  char *writeptr = dst;
+  char *tmpdir = NULL;
+  char *tmpdir_next = NULL;
+  char to_find_fcb [12];
+  char tmp_fcb [12];
+
+  struct dirent *entry;
+  DIR *dir;
+
+  size_t root_len = strlen(root);
+
+  to_find_fcb[11] = 0;  /* null terminate these */
+  tmp_fcb[11] = 0;
+
+  assert(strncmp(root, src, strlen(root)) == 0);
+
+  src += root_len;
+  writeptr += sprintf(dst, "%s/", root);
+
+  printf("shorttolong: %s %s %s\n", dst, src, root);
+
+  if (src[0] != '/') {
+    DBG("ERROR: invalid string for shorttolong encountered: '%s'\n", src);
+    return -1;
+  }
+
+  src++;
+
+  /* get the first token */
+  tmpdir = strtok(src, "/");
+   
+  /* walk through other tokens */
+  while (tmpdir != NULL) {
+    
+    tmpdir_next = strtok(NULL, "/");
+
+    /* Turn this back into an FCB string */
+    filename2fcb(to_find_fcb, tmpdir);
+
+    /* Walk the current directory depicted by destination */
+
+    dir = opendir(dst);
+
+    if (dir == NULL) {
+      DBG(stderr, "ERROR: Failed to open directory %s", dst);
+      return -1;
+    }
+
+    found = 0;
+
+    while ((entry = readdir(dir)) != NULL) {
+      if ((strcmp(entry->d_name, ".") == 0) || (strcmp(entry->d_name, "..") == 0))
+        continue;
+
+      /* get FCB name for this */
+      filename2fcb(tmp_fcb, entry->d_name);
+
+      /*if if its fcb name matches what we are trying to find, this may be our destination. */
+
+      if (strcmp(tmp_fcb, to_find_fcb) == 0) {
+        /*if we're not in the last section of the input path, this must be a directory*/
+
+        if ((tmpdir_next != NULL) && (entry->d_type != DT_DIR)) {
+          DBG("The name matched but isnt a directory.\n");
+          continue;
+        }
+
+        writeptr += sprintf(writeptr, "%s", entry->d_name);
+
+        /* it is a directory, so we must append a / to our destination */
+        if (tmpdir_next != NULL) {
+          writeptr += sprintf(writeptr, "/");
+        }
+
+        found = 1;
+
+      }
+
+    }
+
+    closedir(dir);
+
+    if (!found) {
+      /* Print the raw version as is to the destination string. Is useful for mkdir. */
+      writeptr += sprintf(writeptr, tmpdir);
+
+      DBG("Part of the path was not found - ergo it does not exist.\n");
+      return -1;
+    }
+
+    tmpdir = tmpdir_next;
+  }
+
+    DBG("shorttolong RESULT: %s\n", dst);
+
+  return 0;
 }

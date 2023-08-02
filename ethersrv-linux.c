@@ -205,6 +205,15 @@ static void charreplace(char *s, char rep, char repby) {
   }
 }
 
+/* copies everything after last slash into dst */
+static void copy_after_last_slash(char *dst, const char *src) {
+    const char *last_slash = strrchr(src, '/');
+
+    if (last_slash)
+        strcpy(dst, last_slash + 1);
+}
+
+
 
 static int process(struct struct_answcache *answer, unsigned char *reqbuff, int reqbufflen, unsigned char *mymac, char **rootarray) {
   int query, reqdrv, reqflags;
@@ -300,6 +309,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     DBG("Writing %u bytes into file #%u, starting offset %u\n", reqbufflen - 6, fileid, offset);
     writelen = writefile(reqbuff + 6, fileid, offset, reqbufflen - 6);
     if (writelen < 0) {
+      fprintf(stderr, "ERROR: Access denied");
       *ax = 5; /* "access denied" */
     } else {
       wansw[0] = htole16(writelen);
@@ -309,7 +319,8 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     /* I do nothing, except lying that lock/unlock succeeded */
   } else if (query == AL_FINDFIRST) { /* 0x1B */
     struct fileprops fprops;
-    char directory[256];
+    char directory[DIR_MAX];
+    char host_directory[DIR_MAX];
     unsigned short dirss;
     char filemask[16], filemaskfcb[12];
     int offset;
@@ -330,7 +341,14 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     flags = 0;
     if (isroot(root, directory) != 0) flags |= FFILE_ISROOT;
     if (drivesfat[reqdrv] != 0) flags |= FFILE_ISFAT;
-    dirss = getitemss(directory);
+
+    /* try to get the host name for this string */
+    if (shorttolong(host_directory, directory, root) != 0) {
+      fprintf(stderr, "FINDFIRST Error (%s): Cannot obtain host path for directory.", directory);
+      /* let the rest of the code path deal with error handling, whatever... */
+    }
+
+    dirss = getitemss(host_directory);
     if ((dirss == 0xffffu) || (findfile(&fprops, dirss, filemaskfcb, fattr, &fpos, flags) != 0)) {
       DBG("No matching file found\n");
       *ax = 0x12; /* 0x12 is "no more files" -- one would assume 0x02 "file not found" would be better, but that's not what MS-DOS 5.x does, some applications rely on a failing FFirst to return 0x12 (for example LapLink 5) */
@@ -386,7 +404,8 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
       reslen = 24;
     }
   } else if ((query == AL_MKDIR) || (query == AL_RMDIR)) { /* MKDIR or RMDIR */
-    char directory[256];
+    char directory[DIR_MAX];
+    char host_directory[DIR_MAX];
     int offset;
     offset = sprintf(directory, "%s/", root);
     /* explode the full "\DIR\FILE????.???" search path into directory and mask */
@@ -394,21 +413,29 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     directory[offset + reqbufflen] = 0;
     lostring(directory + offset, -1);
     charreplace(directory, '\\', '/');
+
+    /* try to get the host name for this string */
+    /* HACK: so we expect this to fail because, but shorttolong *does* append the last section of the requested path as is, so we just try with that */
+    if (shorttolong(host_directory, directory, root) == 0) {
+      fprintf(stderr, "MKDIR Error (%s): A file exists that matches this name pattern.\n", directory);
+    }
+
     if (query == AL_MKDIR) {
-      DBG("MKDIR '%s'\n", directory);
-      if (makedir(directory) != 0) {
+      DBG("MKDIR '%s'\n", host_directory);
+      if (makedir(host_directory) != 0) {
         *ax = 29;
         fprintf(stderr, "MKDIR Error: %s\n", strerror(errno));
       }
     } else {
-      DBG("RMDIR '%s'\n", directory);
-      if (remdir(directory) != 0) {
+      DBG("RMDIR '%s'\n", host_directory);
+      if (remdir(host_directory) != 0) {
         *ax = 29;
         fprintf(stderr, "RMDIR Error: %s\n", strerror(errno));
       }
     }
   } else if (query == AL_CHDIR) { /* check if dir exist, return ax=0 if so, ax=3 otherwise */
-    char directory[256];
+    char directory[DIR_MAX];
+    char host_directory[DIR_MAX];
     int offset;
     offset = sprintf(directory, "%s/", root);
     memcpy(directory + offset, (char *)reqbuff, reqbufflen);
@@ -416,9 +443,12 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     lostring(directory + offset, -1);
     charreplace(directory, '\\', '/');
     DBG("CHDIR '%s'\n", directory);
-    /* try to chdir to this dir - if works, then we're good */
-    if (changedir(directory) != 0) {
-      fprintf(stderr, "CHDIR Error (%s): %s\n", directory, strerror(errno));
+
+    /* try to get the host name for this string */
+    if (shorttolong(host_directory, directory, root) != 0) {
+      fprintf(stderr, "CHDIR Error (%s): Cannot obtain host path for directory.\n", directory);
+    } else if (changedir(host_directory) != 0) {
+      fprintf(stderr, "CHDIR Error (%s): %s\n", host_directory, strerror(errno));
       *ax = 3;
     }
   } else if (query == AL_CLSFIL) { /* AL_CLSFIL (0x06) */
@@ -499,7 +529,8 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
       *ax = 2;
     }
   } else if (query == AL_DELETE) {
-    char fullpathname[512];
+    char fullpathname[DIR_MAX];
+    char host_fullpathname[DIR_MAX];
     int offset;
     /* compute full path/file first */
     offset = sprintf(fullpathname, "%s/", root);
@@ -508,17 +539,25 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     lostring(fullpathname + offset, -1);
     charreplace(fullpathname, '\\', '/');
     DBG("DELETE '%s'\n", fullpathname);
-    /* is it read-only? */
-    if (getitemattr(fullpathname, NULL, drivesfat[reqdrv]) & 1) {
+
+    
+    /* try to get the host name for this string */
+    if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
+      fprintf(stderr, "DELETE Error (%s): Cannot obtain host path for directory.\n", fullpathname);
+      *ax = 2;
+    } else if (getitemattr(host_fullpathname, NULL, drivesfat[reqdrv]) & 1) { /* is it read-only? */    
       *ax = 5; /* "access denied" */
-    } else if (delfiles(fullpathname) < 0) {
+    } else if (delfiles(host_fullpathname) < 0) {
       *ax = 2;
     }
   } else if ((query == AL_OPEN) || (query == AL_CREATE) || (query == AL_SPOPNFIL)) { /* OPEN is only about "does this file exist", and CREATE "please create or truncate this file", while SPOPNFIL is a combination of both with extra flags */
     struct fileprops fprops;
-    char directory[256];
-    char fname[16], fnamefcb[12];
-    char fullpathname[512];
+    char directory[DIR_MAX];
+    char host_directory[DIR_MAX];
+    char fname[DIR_MAX];
+    char fnamefcb[12];
+    char fullpathname[DIR_MAX];
+    char host_fullpathname[DIR_MAX];
     int offset;
     int fileres;
     unsigned short stackattr, actioncode, spopen_openmode, spopres = 0;
@@ -536,11 +575,19 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     /* compute directory and 'search mask' */
     offset = sprintf(directory, "%s/", root);
     explodepath(directory + offset, fname, (char *)reqbuff+6, reqbufflen-6);
+
+    /* attempt to get host version of the full path name, hoping it exists. */
+    if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
+      /* if it does, copy its filename to host_fname.*/
+      copy_after_last_slash(fname, host_fullpathname);
+    }
+
     lostring(directory + offset, -1);
     lostring(fname, -1);
     charreplace(directory, '\\', '/');
+
     /* does the directory exist? */
-    if (changedir(directory) != 0) {
+    if ((shorttolong(host_directory, directory, root) != 0) || (changedir(host_directory) != 0)) {
       DBG("open/create/spop failed because directory does not exist\n");
       *ax = 3; /* "path not found" */
     } else {
@@ -552,7 +599,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
       /* open or create file, depending on exact subfunction */
       if (query == AL_CREATE) {
         DBG("CREATEFIL / stackattr (attribs)=%04Xh / fn='%s'\n", stackattr, fullpathname);
-        fileres = createfile(&fprops, directory, fname, stackattr & 0xff, drivesfat[reqdrv]);
+        fileres = createfile(&fprops, host_directory, fname, stackattr & 0xff, drivesfat[reqdrv]);
         resopenmode = 2; /* read/write */
       } else if (query == AL_SPOPNFIL) {
         /* actioncode contains instructions about how to behave...
@@ -566,13 +613,13 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
         int attr;
         DBG("SPOPNFIL / stackattr=%04Xh / action=%04Xh / openmode=%04Xh / fn='%s'\n", stackattr, actioncode, spopen_openmode, fullpathname);
         /* see if file exists (and is a file) */
-        attr = getitemattr(fullpathname, &fprops, drivesfat[reqdrv]);
+        attr = getitemattr(host_fullpathname, &fprops, drivesfat[reqdrv]);
         resopenmode = spopen_openmode & 0x7f; /* that's what PHANTOM.C does */
         if (attr == 0xff) { /* file not found - look at high nibble of action code */
           DBG("file doesn't exist -> ");
           if ((actioncode & 0xf0) == 16) { /* create */
             DBG("create file\n");
-            fileres = createfile(&fprops, directory, fname, stackattr & 0xff, drivesfat[reqdrv]);
+            fileres = createfile(&fprops, host_directory, fname, stackattr & 0xff, drivesfat[reqdrv]);
             if (fileres == 0) spopres = 2; /* spopres == 2 means 'file created' */
           } else { /* fail */
             DBG("fail\n");
@@ -589,7 +636,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
             spopres = 1; /* spopres == 1 means 'file opened' */
           } else if ((actioncode & 0x0f) == 2) { /* truncate */
             DBG("truncate file\n");
-            fileres = createfile(&fprops, directory, fname, stackattr & 0xff, drivesfat[reqdrv]);
+            fileres = createfile(&fprops, host_directory, fname, stackattr & 0xff, drivesfat[reqdrv]);
             if (fileres == 0) spopres = 3; /* spopres == 3 means 'file truncated' */
           } else { /* fail */
             DBG("fail\n");
@@ -600,7 +647,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
         int attr;
         DBG("OPENFIL / stackattr (open modes)=%04Xh / fn='%s'\n", stackattr, fullpathname);
         resopenmode = stackattr & 0xff;
-        attr = getitemattr(fullpathname, &fprops, drivesfat[reqdrv]);
+        attr = getitemattr(host_fullpathname, &fprops, drivesfat[reqdrv]);
         /* check that item exists, and is neither a volume nor a directory */
         if ((attr != 0xff) && ((attr & (FAT_VOL | FAT_DIR)) == 0)) {
           fileres = 0;
@@ -613,7 +660,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
         *ax = 2;
       } else { /* success (found a file, created it or truncated it) */
         unsigned short fileid;
-        fileid = getitemss(fullpathname);
+        fileid = getitemss(host_fullpathname);
         DBG("found file: FCB '%s' (id %04X)\n", pfcb(fprops.fcbname), fileid);
         DBG("     fsize: %lu\n", fprops.fsize);
         DBG("     fattr: %02Xh\n", fprops.fattr);
