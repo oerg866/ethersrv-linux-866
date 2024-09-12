@@ -457,34 +457,45 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     DBG("CLOSE FILE\n");
     *ax = 0;
   } else if ((query == AL_SETATTR) && (reqbufflen > 1)) { /* AL_SETATTR (0x0E) */
-    char fname[512];
+    char fullpathname[DIR_MAX];
+    char host_fullpathname[DIR_MAX];
     int offset;
     unsigned char fattr;
     fattr = reqbuff[0];
     /* get full file path */
-    offset = sprintf(fname, "%s/", root);
-    memcpy(fname + offset, (char *)reqbuff + 1, reqbufflen - 1);
-    fname[offset + reqbufflen - 1] = 0;
-    lostring(fname + offset, -1);
-    charreplace(fname, '\\', '/');
-    DBG("SETATTR [file: '%s', attr: 0x%02X]\n", fname, fattr);
-    /* set attr, but only if drive is FAT */
-    if (drivesfat[reqdrv] != 0) {
-      if (setitemattr(fname, fattr) != 0) *ax = 2;
+    offset = sprintf(fullpathname, "%s/", root);
+    memcpy(fullpathname + offset, (char *)reqbuff + 1, reqbufflen - 1);
+    fullpathname[offset + reqbufflen - 1] = 0;
+    lostring(fullpathname + offset, -1);
+    charreplace(fullpathname, '\\', '/');
+
+    DBG("SETATTR [file: '%s', attr: 0x%02X]\n", fullpathname, fattr);
+
+    /* try to get the host name for this string */
+    if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
+      fprintf(stderr, "SETATTR Error (%s): Cannot obtain host path for directory.\n", fullpathname);
+    } else if (drivesfat[reqdrv] != 0) {
+      /* set attr, but only if drive is FAT */
+      if (setitemattr(host_fullpathname, fattr) != 0) *ax = 2;
     }
   } else if ((query == AL_GETATTR) && (reqbufflen > 0)) { /* AL_GETATTR (0x0F) */
-    char fname[512];
+    char fullpathname[DIR_MAX];
+    char host_fullpathname[DIR_MAX];
     int offset;
     struct fileprops fprops;
     /* get full file path */
-    offset = sprintf(fname, "%s/", root);
-    memcpy(fname + offset, (char *)reqbuff, reqbufflen);
-    fname[offset + reqbufflen] = 0;
-    lostring(fname + offset, -1);
-    charreplace(fname, '\\', '/');
-    DBG("GETATTR on file: '%s' (fatflag=%d)\n", fname, drivesfat[reqdrv]);
-    /* */
-    if (getitemattr(fname, &fprops, drivesfat[reqdrv]) == 0xFF) {
+    offset = sprintf(fullpathname, "%s/", root);
+    memcpy(fullpathname + offset, (char *)reqbuff, reqbufflen);
+    fullpathname[offset + reqbufflen] = 0;
+    lostring(fullpathname + offset, -1);
+    charreplace(fullpathname, '\\', '/');
+
+    DBG("GETATTR on file: '%s' (fatflag=%d)\n", fullpathname, drivesfat[reqdrv]);
+
+    /* try to get the host name for this string */
+    if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
+      fprintf(stderr, "GETATTR Error (%s): Cannot obtain host path for directory.\n", fullpathname);
+    } else if (getitemattr(host_fullpathname, &fprops, drivesfat[reqdrv]) == 0xFF) {
       DBG("no file found\n");
       *ax = 2;
     } else {
@@ -502,6 +513,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
   } else if ((query == AL_RENAME) && (reqbufflen > 2)) { /* AL_RENAME (0x11) */
     /* query is LSSS...DDD... */
     char fn1[1024], fn2[1024];
+    char host_fn1[1024];
     int fn1len, fn2len, offset;
     offset = sprintf(fn1, "%s/", root);
     sprintf(fn2, "%s/", root);
@@ -516,14 +528,21 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
       fn2[fn2len + offset] = 0;
       lostring(fn2 + offset, -1);
       charreplace(fn2, '\\', '/');
+
       DBG("RENAME src='%s' dst='%s'\n", fn1, fn2);
-      /* if fn2 destination exists, abort with errcode=5 (as does MS-DOS 5) */
-      if (getitemattr(fn2, NULL, 0) != 0xff) {
-        DBG("ERROR: '%s' exists already\n", fn2);
-        *ax = 5;
+
+      /* try to get the host name for this string */
+      if (shorttolong(host_fn1, fn1, root) != 0) {
+        fprintf(stderr, "RENAME Error (%s): Cannot obtain host path for directory.\n", fn1);
       } else {
-        DBG("'%s' doesn't exist -> proceed with renaming\n", fn2);
-        if (renfile(fn1, fn2) != 0) *ax = 5;
+        if (getitemattr(fn2, NULL, 0) != 0xff) {
+          /* if fn2 destination exists, abort with errcode=5 (as does MS-DOS 5) */
+            DBG("ERROR: '%s' exists already\n", fn2);
+            *ax = 5;
+          } else {
+            DBG("'%s' doesn't exist -> proceed with renaming\n", fn2);
+            if (renfile(host_fn1, fn2) != 0) *ax = 5;
+          }
       }
     } else {
       *ax = 2;
