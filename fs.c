@@ -553,7 +553,7 @@ int shorttolong(char *dst, char *src, const char *root) {
     dir = opendir(dst);
 
     if (dir == NULL) {
-      DBG(stderr, "ERROR: Failed to open directory %s", dst);
+      DBG("ERROR: Failed to open directory %s", dst);
       return -1;
     }
 
@@ -593,7 +593,7 @@ int shorttolong(char *dst, char *src, const char *root) {
 
     if (!found) {
       /* Print the raw version as is to the destination string. Is useful for mkdir. */
-      writeptr += sprintf(writeptr, tmpdir);
+      writeptr += sprintf(writeptr, "%s", tmpdir);
 
       DBG("Part of the path was not found - ergo it does not exist.\n");
       return -1;
