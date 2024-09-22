@@ -559,7 +559,7 @@ int shorttolong(char *dst, char *src, const char *root) {
 
     found = 0;
 
-    while ((entry = readdir(dir)) != NULL) {
+    while (!found && (entry = readdir(dir)) != NULL) {
       if ((strcmp(entry->d_name, ".") == 0) || (strcmp(entry->d_name, "..") == 0))
         continue;
 
