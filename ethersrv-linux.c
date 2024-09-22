@@ -447,6 +447,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     /* try to get the host name for this string */
     if (shorttolong(host_directory, directory, root) != 0) {
       fprintf(stderr, "CHDIR Error (%s): Cannot obtain host path for directory.\n", directory);
+      *ax = 3;
     } else if (changedir(host_directory) != 0) {
       fprintf(stderr, "CHDIR Error (%s): %s\n", host_directory, strerror(errno));
       *ax = 3;
