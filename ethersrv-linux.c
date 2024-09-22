@@ -603,7 +603,6 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     }
 
     lostring(directory + offset, -1);
-    lostring(fname, -1);
     charreplace(directory, '\\', '/');
 
     /* does the directory exist? */
