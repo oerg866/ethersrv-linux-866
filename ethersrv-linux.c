@@ -475,6 +475,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     /* try to get the host name for this string */
     if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
       fprintf(stderr, "SETATTR Error (%s): Cannot obtain host path for directory.\n", fullpathname);
+      *ax = 2;
     } else if (drivesfat[reqdrv] != 0) {
       /* set attr, but only if drive is FAT */
       if (setitemattr(host_fullpathname, fattr) != 0) *ax = 2;
@@ -496,6 +497,7 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     /* try to get the host name for this string */
     if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
       fprintf(stderr, "GETATTR Error (%s): Cannot obtain host path for directory.\n", fullpathname);
+      *ax = 2;
     } else if (getitemattr(host_fullpathname, &fprops, drivesfat[reqdrv]) == 0xFF) {
       DBG("no file found\n");
       *ax = 2;
