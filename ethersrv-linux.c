@@ -598,12 +598,6 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
     offset = sprintf(directory, "%s/", root);
     explodepath(directory + offset, fname, (char *)reqbuff+6, reqbufflen-6);
 
-    /* attempt to get host version of the full path name, hoping it exists. */
-    if (shorttolong(host_fullpathname, fullpathname, root) != 0) {
-      /* if it does, copy its filename to host_fname.*/
-      copy_after_last_slash(fname, host_fullpathname);
-    }
-
     lostring(directory + offset, -1);
     charreplace(directory, '\\', '/');
 
@@ -612,6 +606,16 @@ static int process(struct struct_answcache *answer, unsigned char *reqbuff, int 
       DBG("open/create/spop failed because directory does not exist\n");
       *ax = 3; /* "path not found" */
     } else {
+      /* Directory exists, attempt to get host version of the full path name, hoping it exists. */
+      if (shorttolong(host_fullpathname, fullpathname, root) == 0) {
+        /* if it does, copy its filename to host_fname.*/
+        copy_after_last_slash(fname, host_fullpathname);
+      } else {
+        /* if it doesn't exist, make file name lowercase and then craft the host full path name */
+        lostring(fname, -1);
+        sprintf(host_fullpathname, "%s/%s", host_directory, fname);
+      }
+
       /* compute a FCB-style version of the filename */
       filename2fcb(fnamefcb, fname);
       /* */
